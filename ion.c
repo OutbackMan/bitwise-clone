@@ -1,60 +1,71 @@
 // sentence(set of words that is complete) -> subject + predicate(something that is affirmed) 
-// syntax classes/symbols are words
+// syntax classes/symbols are words (grammar is a more general term that encompasses syntax)
 // syntax equations are valid ways of combining syntax classes. this defines words and their structure. They can be represented as syntax trees.
 // language is set of valid syntax rules
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_WARNINGS // This removes warnings for not using '_s' variants
+#endif
 
 // perror() for memory allocation failures
 
-// stretchy buffers
+#define MAX(x, y)	\
+	((x) >= (y) ? (x) : (y))
+
+// stretchy bufs
 typedef struct {
 	size_t length;
 	size_t capacity;
 
-	char buffer[0];	// allow for array to pointer decay
+	char buffer[0];	// flexible array, i.e. allow to declare a variable length array
 } BufferHeader;
 
-#define buffer__header(buffer)	\
-	(BufferHeader *)((char *)(buffer) - offsetof(BufferHeader, buffer))
+#define BUF__HEADER(b)	\
+	((BufferHeader *)((char *)(b) - offsetof(BufferHeader, buffer)))
 
-#define buffer__fits(buffer, amount) \
-	(buffer_length(buffer) + amount <= buffer_capacity(buffer))
+#define BUF_LENGTH(b)	\
+	(((b) != NULL) ? BUF__HEADER(b)->length : 0)
 
-#define buffer__fit(buffer, n)	\
-	(buffer__fits(buffer, 1) ? 0 : buffer = buffer__grow(buffer, buffer_length(buffer) + n, sizeof(*buffer)))
+#define BUF_CAPACITY(b)	\
+	(((b) != NULL) ? BUF__HEADER(b)->capacity : 0)
 
-#define buffer_length(buffer)	\
-	(buffer ? buffer__header(buffer)->length : 0)
+#define BUF__FITS(b, amount) \
+	(BUF_LENGTH(b) + (amount) <= BUF_CAPACITY(b))
 
-#define buffer_capacity(buffer)	\
-	(buffer ? buffer__header(buffer)->capacity : 0)
+#define BUF__FIT(b, amount)	\
+	(BUF__FITS(b, 1) ? 0 : ((b) = buf__grow((b), BUF_LENGTH(b) + (amount), sizeof(*(b)))))
 
-#define buffer_push(buffer, elem)	\
-	(buffer__fit(buffer, 1), buffer[buffer__length(buffer)] = elem, buffer__header(buffer)->length++) 
+#define BUF_PUSH(b, element)	\
+	(BUF__FIT(b, 1), b[BUF_LENGTH(b)] = (element), BUF__HEADER(b)->length++) 
 
-#define buffer_free(buffer)	\
-	(buffer ? free(buffer__header(buffer)) : 0)
+#define BUF_FREE(b)	\
+	(((b) != NULL) ? free(BUF__HEADER(b)) : 0)
 
-void* buffer__grow(const void* buffer, size_t new_length, size_t elem_size)
+void* buf__grow(const void* buf, size_t new_length, size_t elem_size)
 {
-	size_t new_cap = MAX(1 + 2 * buffer_capacity(buffer), new_length);
+	size_t new_cap = MAX(1 + 2 * BUF_CAPACITY(buf), new_length);
 	// length of header + length of payload
-	size_t new_size = offsetof(BufferHeader, buffer) + new_capacity * elem_size;
+	size_t new_size = offsetof(BufferHeader, buffer) + new_cap * elem_size;
 
 	BufferHeader* new_header = NULL;
 	
-	if (buffer != NULL) {
-		new_header = realloc(buffer__header(buffer), new_size); 
+	if (buf != NULL) {
+		new_header = realloc(BUF__HEADER(buf), new_size); 
 	} else {
 		new_header = malloc(new_size);
 		new_header->length = 0;
 	}
 
+	new_header->capacity = new_cap;
 	return new_header->buffer; 
 }
 
+/*
 // Lexing
 typedef enum {
 	TOKEN_INT = 128,
@@ -76,7 +87,7 @@ typedef struct {
 Token token;
 const char* stream;
 
-void next_token()
+void next_token(void)
 {
 	switch (*stream) {
 	 case 0 ... 9:
@@ -109,19 +120,22 @@ void next_token()
 
 // printf("%.*s", str_length, str); useful for non-null terminated strings
 // casting to avoid compiler warnings is a bad habit
+*/
 
 int main(void)
 {
-	int* int_buffer = NULL;
+	int* int_buf = NULL;
 
-	buffer_push(int_buffer, 10);
-	buffer_push(int_buffer, 18);
-	buffer_push(int_buffer, 10);
-	buffer_push(int_buffer, 10);
+	BUF_PUSH(int_buf, 10);
+	BUF_PUSH(int_buf, 18);
+	BUF_PUSH(int_buf, 10);
+	BUF_PUSH(int_buf, 10);
 
-	for (int i = 0; i < buffer_length(int_buffer); ++i) {
-		printf("%d\n", int_buffer[i]); 
+	for (int i = 0; i < BUF_LENGTH(int_buf); ++i) {
+		printf("%d\n", int_buf[i]); 
 	}
+
+	BUF_FREE(int_buf);
 
 	return 0;			
 }
