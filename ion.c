@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <stdarg.h>
 
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS // This removes warnings for not using '_s' variants
@@ -18,6 +19,16 @@
 
 #define MAX(x, y)	\
 	((x) >= (y) ? (x) : (y))
+
+void fatal(const char* fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	printf("FATAL ERROR: ");
+	vprintf(fmt, args);	
+	printf("\n");
+	va_end(args);
+}
 
 // stretchy bufs
 typedef struct {
@@ -83,12 +94,14 @@ const char* str_intern_range(const char* start, const char* end)
 			return interns[i].str;	
 		}
 	}
-	char* str = malloc(length + 1);
+	char* str = malloc(length + 1); // fix memory leak
 	memcpy(str, start, length);
 	str[length] = '\0';
 	BUF_PUSH(interns, ((InternStr){length, str})); // pre-processor requires these to be wrapped in parentheses to avoid parameter delimiting
+	return str;
 }
 
+// lua interns strings by default, so string comparisions are implicitly converted to pointer comparisons
 const char* str_intern(const char* str)
 {
 	return str_intern_range(str, str + strlen(str));	
@@ -103,17 +116,52 @@ typedef enum {
 	// ..
 } TokenType;
 
+const char* token_type_name(TokenType type)
+{
+	static char buf[256] = {0};
+
+	switch(type) {
+	 case TOKEN_INT:
+	 {
+		sprintf(buf, "integer");
+	 } break;
+	 case TOKEN_NAME:
+	 {
+		sprintf(buf, "name");
+	 } break;
+	 default:
+	 {
+		if (type < 128 && isprint(type)) {
+			sprintf(buf, "%c", type);	
+		} else {
+			sprintf(buf, "<ASCII %d>", type);	
+		} 
+	 }
+		
+	}
+
+	return buf;
+}
+
 typedef struct {
 	TokenType type; 	
 	const char* start;
 	const char* end;
 	union {
-		uint64_t val;		
+		int val;		
+		const char* name;
 	}
 } Token;
 
 Token token;
 const char* stream;
+
+const char* keyword_if;
+
+void intern_keywords(void)
+{
+	keyword_if = str_intern("if");	
+}
 
 void next_token(void)
 {
@@ -130,7 +178,7 @@ void next_token(void)
 	 case 8:
 	 case 9:
 	 {
-		uint64_t val = 0;
+		int val = 0;
 		while (isdigit(*stream)) {
 			val *= 10;
 			val += *stream++ - '0'; // convert ascii to number
@@ -196,6 +244,7 @@ void next_token(void)
 			stream++;		
 		}
 		token.type = TOKEN_NAME;
+		token.name = str_intern_range(token.start, stream);
 	 } break;
 	 default:
 	 {
@@ -203,6 +252,132 @@ void next_token(void)
 	 } break;
 	}	
 	token.end = stream;
+}
+
+void init_stream(const char* str)
+{
+	stream = str;
+	next_token();
+}
+
+void print_token(Token token)
+{
+	switch (token.type) {
+	 case TOKEN_INT:
+	 {
+		printf("TOKEN_INT: %d\n", token.val); 
+	 } break;
+	 case TOKEN_NAME:
+	 {
+		printf("TOKEN_NAME: %.*s\n", (size_t)(token.start - token.end), token.name); 
+	 } break;
+	 default:
+	 {
+		printf("UNKNOWN TOKEN\n");	 
+	 }
+	}	
+}
+
+inline bool is_token(TokenType type)
+{
+	return token.type == type;	
+}
+
+inline bool is_token_name(const char* name)
+{
+	return token.type == TOKEN_NAME && token.name == name;	
+}
+
+inline bool match_token(TokenType type)
+{
+	if (is_token(type)) {
+		next_token();
+		return true;
+	} else {
+		return false;	
+	}	
+}
+
+inline bool expect_token(TokenType type)
+{
+	if (is_token(type)) {
+		next_token();
+		return true;
+	} else {
+		fatal("Expected token: %s, got %s", token_type_name(type), token_type_name(token.type));
+		return false;
+	}	
+}
+
+/* Extended Backus Naur Form
+expr0 = expr1 ([+-] expr1)*
+expr = expr0
+As we recurse, higher level precendences will already have been consumed
+Current implementation is leftfold in all cases
+*/
+int parse_expr(void);
+
+int parse_expr3()
+{
+	if (is_token(TOKEN_INT)) {
+		int val = token.val;
+		next_token();		
+		return val;
+	} else if (match_token('(')) {
+		int val = parse_expr();
+		expect_token(')');
+		return val;
+	} else {
+		fatal("expected integer or (, got %s", token_type_name(token.type));		
+		return 0;
+	}
+}
+
+int parse_expr2()
+{
+	if (match_token('-')) {
+		return -parse_expr3();
+	} else {
+		return parse_expr3();
+	}
+}
+
+int parse_expr1()
+{
+	int val = parse_expr2();
+	while (is_token('/') || is_token('*')) {
+		char op = token.kind; // we know must be an ascii literal
+		next_token();
+		int rval = parse_expr2();
+		if (op == '*') {
+			val *= rval;		
+		} else {
+			val /= rval;		
+		}
+	}
+	return val;
+}
+
+// lookahead, consume, parse recursively
+int parse_expr0()
+{
+	int val = parse_expr1();
+	while (is_token('+') || is_token('-')) {
+		char op = token.kind; // we know must be an ascii literal
+		next_token();
+		int rval = parse_expr1();
+		if (op == '+') {
+			val += rval;		
+		} else {
+			val -= rval;		
+		}
+	}
+	return val;
+}
+
+int parse_expr()
+{
+	return parse_expr0();
 }
 
 // printf("%.*s", str_length, str); useful for non-null terminated strings
